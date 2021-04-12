@@ -1,0 +1,215 @@
+<?php
+
+namespace common\models\materials;
+
+use common\components\Common;
+use common\models\materials\attribute\CategoryAttribute;
+use Yii;
+use yii\db\ActiveQuery;
+use yii\helpers\ArrayHelper;
+use zabachok\behaviors\SluggableBehavior;
+
+/**
+ * This is the model class for table "Category".
+ *
+ * @property int $id
+ * @property int $parent
+ * @property string $title
+ * @property string $text
+ * @property int $sort
+ * @property int $status
+ * @property ActiveQuery children
+ * @property ActiveQuery materials
+ * @property ActiveQuery attribute_list
+ */
+class Category extends \yii\db\ActiveRecord
+{
+    public $PostData;
+    const SCENARIO_EDIT = 'edit';
+
+    public function scenarios()
+    {
+        $scenarios = parent::scenarios();
+        $scenarios[self::SCENARIO_EDIT] = ['sort'];
+        return $scenarios;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public static function tableName()
+    {
+        return 'category';
+    }
+
+    public function behaviors()
+    {
+        return [
+            [
+                'class' => SluggableBehavior::className(),
+                'attribute' => 'title',
+                'ensureUnique' => true
+            ],
+        ];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function rules()
+    {
+        return [
+            [['title', 'slug'], 'required'],
+            [['parent', 'sort', 'status'], 'integer'],
+            [['sort'], 'default', 'value' => 0],
+            [['status'], 'default', 'value' => 1],
+            [['text'], 'string'],
+            [['title', 'slug'], 'string', 'max' => 255],
+        ];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function attributeLabels()
+    {
+        return [
+            'id' => 'ID',
+            'parent' => 'Родитель',
+            'title' => 'Заголовок',
+            'text' => 'Описание',
+            'sort' => 'Порядок сортировки',
+            'status' => 'Status',
+        ];
+    }
+
+    public function getChildren()
+    {
+        return $this->hasMany(Category::className(), ['parent' => 'id'])
+            ->orderBy(['sort' => SORT_DESC]);
+    }
+
+    public function getMaterials()
+    {
+        return $this->hasMany(Material::className(), ['parent' => 'id'])
+            ->orderBy(['sort' => SORT_DESC]);
+    }
+
+
+    public function getParent()
+    {
+        return $this->hasOne(Category::className(), ['id' => 'parent']);
+    }
+
+    public function getAttribute_list()
+    {
+        return $this->hasMany(CategoryAttribute::className(), ['category_id' => 'id']);
+    }
+
+    /**
+     * @param $id
+     * @return CategoryAttribute|null
+     */
+    public function getAttributeById($id) {
+        $attribute = CategoryAttribute::findOne(['attribute_id' => $id, 'category_id' => $this->id]);
+        return $attribute;
+    }
+
+    /**
+     * @param $id
+     * @return Category|null
+     */
+    public function getChildById($id) {
+        $attribute = Category::findOne(['parent' => $this->id, 'id' => $id]);
+        return $attribute;
+    }
+
+    public function getAttributesByGroup()
+    {
+        $attributes = CategoryAttribute::find()
+            ->andWhere(['category_id' => $this->id])
+            ->all();
+        return ArrayHelper::map($attributes, 'id', 'self', 'attribute0.group.title');
+    }
+
+    public function getAttributesByGroupWithoutInherit() {
+        $attributes = CategoryAttribute::find()
+            ->andWhere(['category_id' => $this->id])
+            ->andWhere(['inherit' => 1])
+            ->all();
+        return ArrayHelper::map($attributes, 'id', 'self', 'attribute0.group.title');
+    }
+
+    /**
+     * @return array
+     */
+    public function getSelectParent()
+    {
+        $categories = self::find();
+        $categories = $this->excludeCategory($categories, $this);
+        return ArrayHelper::map($categories->all(), 'id', 'title');
+    }
+
+    /**
+     * @param ActiveQuery $categories
+     * @param Category $parent
+     * @return ActiveQuery
+     */
+    private function excludeCategory($categories, $parent)
+    {
+        if ($parent->id) {
+            $categories->andWhere(['<>', 'id', $parent->id]);
+            foreach ($parent->children as $child) {
+                $categories = $this->excludeCategory($categories, $child);
+            }
+        }
+        return $categories;
+    }
+
+    public static function getSelectParents()
+    {
+        $categories = Category::find()
+            ->select(['c.id', 'c.title'])
+            ->join('JOIN', 'category c', 'category.parent = c.id')
+            ->distinct(true)
+            ->all();
+        return ArrayHelper::map($categories, 'id', 'title');
+    }
+
+    public static function getTitle($id)
+    {
+        $title = self::findOne($id)->title;
+        return $title ? $title : false;
+    }
+
+    public function load($data, $formName = null)
+    {
+        $this->PostData = $data;
+        return parent::load($data, $formName); // TODO: Change the autogenerated stub
+    }
+
+    /**
+     * @param bool $insert
+     * @param array $changedAttributes
+     * @throws \Throwable
+     * @throws \yii\db\StaleObjectException
+     */
+    public function afterSave($insert, $changedAttributes)
+    {
+        if ($this->scenario != self::SCENARIO_EDIT) {
+            CategoryAttribute::saveAttributes($this);
+        }
+        parent::afterSave($insert, $changedAttributes); // TODO: Change the autogenerated stub
+    }
+
+    /**
+     * @return bool
+     * @throws \Throwable
+     * @throws \yii\db\StaleObjectException
+     */
+    public function beforeDelete()
+    {
+        Common::deleteAll($this->attribute_list);
+        return parent::beforeDelete(); // TODO: Change the autogenerated stub
+    }
+}
